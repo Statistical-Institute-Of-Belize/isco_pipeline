@@ -1,0 +1,44 @@
+data:
+  raw_dir: "data/raw/"
+  processed_dir: "data/processed/"
+  corrections_dir: "data/corrections/"
+  reference_dir: "data/reference/"
+  review_dir: "data/review/"
+  # Settings for ISCO code validation
+  validate_against_reference: true   # Set to true to validate ISCO codes against the reference file
+  reference_file: "/Users/gianaguilar/Documents/GitHub/isco_pipeline/data/reference/isco08_reference.csv"  # Absolute path to reference file
+  # Settings for large datasets
+  skip_clustering: true    # Set to true to skip clustering entirely
+  skip_clustering_threshold: 100000  # Skip clustering for datasets larger than this
+model:
+  name: "roberta-base"
+  max_seq_length: 160
+  batch_size: 32  # Smaller batch size for large datasets
+  epochs: 6
+  learning_rate: 3.5e-5
+  confidence_threshold: 0.001
+  four_digit_only: true  # Only use 4-digit ISCO codes for classification
+training:
+  enable_optimizations: true
+  warmup_steps: 500
+  weight_decay: 0.01
+  logging_steps: 10
+  early_stopping_patience: 2
+  gradient_accumulation_steps: 2  # Increase to reduce memory usage with large datasets
+  evaluation_strategy: "epoch"
+  save_strategy: "no"  # Don't save checkpoints during training
+  save_total_limit: 1  # Only keep the latest checkpoint
+  dataloader_num_workers: 2
+  mps_memory_efficient: true
+  # Mixed precision training for MPS (Metal Performance Shaders) on Apple Silicon
+  # These settings enable reduced precision training to improve performance
+  mps_mixed_precision: true     # Enable/disable mixed precision on MPS devices
+  mp_init_scale: 128.0          # Initial loss scale factor for mixed precision
+  mp_growth_factor: 2.0         # Factor to increase scale after successful steps
+  mp_backoff_factor: 0.5        # Factor to decrease scale after encountering NaN
+  mp_growth_interval: 2000      # Steps between scale increases
+output:
+  model_dir: "models/"
+  best_model_dir: "models/best_model/"
+explainability:
+  sample_size: 10

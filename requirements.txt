@@ -1,0 +1,11 @@
+torch==2.0.1
+transformers==4.35.0
+pandas==2.0.3
+scikit-learn==1.3.0
+pyyaml==6.0.1
+shap==0.43.0
+seaborn==0.12.2
+matplotlib==3.7.2
+numpy==1.24.3
+colorama==0.4.6
+tqdm==4.66.1  # For better progress bars
