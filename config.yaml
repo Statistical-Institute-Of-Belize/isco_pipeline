@@ -14,7 +14,7 @@ model:
   name: "roberta-base"
   max_seq_length: 160
   batch_size: 32  # Smaller batch size for large datasets
-  epochs: 6
+  epochs: 1
   learning_rate: 3.5e-5
   confidence_threshold: 0.001
   four_digit_only: true  # Only use 4-digit ISCO codes for classification

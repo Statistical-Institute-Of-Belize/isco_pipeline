@@ -9,7 +9,7 @@ from datetime import datetime
 # Add the current directory to sys.path
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from src.utils import load_config, ensure_dir
+from src.utils import load_config, ensure_dir, load_isco_reference
 from src.preprocess import preprocess_data
 from src.model import train_model
 from src.predict import predict_batch, load_model_and_mappings
@@ -159,6 +159,12 @@ def parse_arguments():
         help="Skip the evaluation stage"
     )
     
+    parser.add_argument(
+        "--force-update-best",
+        action="store_true",
+        help="Force updating the best model even if the new model isn't better"
+    )
+    
     return parser.parse_args()
 
 def load_and_update_config(args):
@@ -180,12 +186,13 @@ def load_and_update_config(args):
     
     return config
 
-def run_preprocessing_and_training(config):
+def run_preprocessing_and_training(config, force_update_best=False):
     """
     Run preprocessing and model training
     
     Args:
         config (dict): Configuration dictionary
+        force_update_best (bool): Whether to force update the best model even if not better
         
     Returns:
         tuple: Trainer and label-to-ID mapping
@@ -199,19 +206,23 @@ def run_preprocessing_and_training(config):
         logger.error(f"Input file not found: {input_path}")
         raise FileNotFoundError(f"Input file not found: {input_path}")
     
+    # Add force_update_best flag to config
+    config["training"]["force_update_best"] = force_update_best
+    
     # Train model
     logger.info("Training model")
     trainer, label2id, code_metadata = train_model(config)
     
     return trainer, label2id, code_metadata
 
-def run_fine_tuning(config, corrections_dir):
+def run_fine_tuning(config, corrections_dir, force_update_best=False):
     """
     Fine-tune model with manual corrections
     
     Args:
         config (dict): Configuration dictionary
         corrections_dir (str): Directory with correction CSVs
+        force_update_best (bool): Whether to force update the best model even if not better
     """
     # Check if corrections directory exists
     if not os.path.exists(corrections_dir):
@@ -274,56 +285,18 @@ def run_fine_tuning(config, corrections_dir):
     logger.info(f"Fine-tuning model with {len(corrections_df)} corrections")
     trainer, label2id, code_metadata = train_model(fine_tune_config)
     
-    # Save fine-tuned model with code metadata
+    # Save fine-tuned model with code metadata only if it's better
     from src.model import save_best_model
-    save_best_model(trainer, config["output"]["best_model_dir"], 
-                 label2id, code_metadata)
-    logger.info(f"Saved fine-tuned model to {config['output']['best_model_dir']}")
+    # Use force_update_best flag to determine whether to force save
+    saved = save_best_model(trainer, config["output"]["best_model_dir"], 
+                 label2id, code_metadata, force_save=force_update_best)
+    
+    if saved:
+        logger.info(f"Saved fine-tuned model to {config['output']['best_model_dir']}")
+    else:
+        logger.warning("Fine-tuned model was not better than existing best model. Not updating best_model directory.")
 
-def load_isco_reference():
-    """
-    Load ISCO reference file with occupation titles
-    
-    Returns:
-        dict: Dictionary mapping ISCO codes to occupation titles
-    """
-    reference_path = "/Users/gianaguilar/Documents/GitHub/isco_pipeline/data/reference/isco08_reference.csv"
-    
-    if not os.path.exists(reference_path):
-        logger.warning(f"ISCO reference file not found at {reference_path}")
-        return {}
-    
-    try:
-        # Try different encodings since CSV files can have various encodings
-        for encoding in ['utf-8', 'latin-1', 'windows-1252', 'ISO-8859-1']:
-            try:
-                isco_df = pd.read_csv(reference_path, encoding=encoding)
-                break
-            except UnicodeDecodeError:
-                continue
-        
-        # Check if the expected columns exist
-        if 'ISCO 08 Code' not in isco_df.columns or 'Title EN' not in isco_df.columns:
-            logger.warning("Expected columns 'ISCO 08 Code' or 'Title EN' not found in reference file")
-            return {}
-        
-        # Create a dictionary mapping codes to titles
-        code_to_title = {}
-        for _, row in isco_df.iterrows():
-            if pd.notna(row['ISCO 08 Code']) and pd.notna(row['Title EN']):
-                code = str(row['ISCO 08 Code']).strip()
-                title = str(row['Title EN']).strip()
-                
-                # Skip empty or non-numeric codes
-                if code and code.isdigit():
-                    code_to_title[code] = title
-                    
-        logger.info(f"Loaded {len(code_to_title)} ISCO codes with titles from reference file")
-        return code_to_title
-        
-    except Exception as e:
-        logger.warning(f"Error loading ISCO reference file: {e}")
-        return {}
+# The load_isco_reference function has been moved to src/utils.py for reuse in both CLI and API
 
 def run_prediction(input_path, config, explain=False):
     """
@@ -361,7 +334,8 @@ def run_prediction(input_path, config, explain=False):
     })
     
     # Load ISCO reference data for occupation titles
-    isco_code_to_title = load_isco_reference()
+    reference_path = config["data"].get("reference_file")
+    isco_code_to_title = load_isco_reference(reference_path)
     
     # Load model and mappings
     model, tokenizer, label_map = load_model_and_mappings(config["output"]["best_model_dir"])
@@ -461,10 +435,14 @@ def main():
         
         logger.info(f"Pipeline will run these stages: {', '.join(stages)}")
         
+        # Warn if force update flag is used
+        if args.force_update_best:
+            logger.warning(f"{Fore.YELLOW}⚠️ Force update best model flag is set! This will replace the best model even if the new model is worse.{Style.RESET_ALL}")
+        
         # Run preprocessing and training if not skipped
         if not args.skip_training:
             logger.info(f"{Fore.CYAN}{Style.BRIGHT}Stage 1/4: Preprocessing and Training{Style.RESET_ALL}")
-            run_preprocessing_and_training(config)
+            run_preprocessing_and_training(config, force_update_best=args.force_update_best)
             logger.info(f"{Fore.CYAN}Preprocessing and training completed successfully ✓{Style.RESET_ALL}")
         
         # Fine-tune if requested
@@ -472,7 +450,7 @@ def main():
             stage_num = 2 if not args.skip_training else 1
             total_stages = 4 if not args.skip_training else 3
             logger.info(f"{Fore.CYAN}{Style.BRIGHT}Stage {stage_num}/{total_stages}: Fine-tuning{Style.RESET_ALL}")
-            run_fine_tuning(config, args.corrections_dir)
+            run_fine_tuning(config, args.corrections_dir, force_update_best=args.force_update_best)
             logger.info(f"{Fore.CYAN}Fine-tuning completed successfully ✓{Style.RESET_ALL}")
         
         # Run prediction if input provided

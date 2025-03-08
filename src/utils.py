@@ -2,6 +2,7 @@ import os
 import yaml
 import logging
 import traceback
+import pandas as pd
 from functools import lru_cache
 from contextlib import contextmanager
 import torch
@@ -246,3 +247,62 @@ def configure_mps_memory(mps_memory_efficient=True):
         logger.info("MPS memory efficiency settings enabled")
         
     return
+
+
+def load_isco_reference(reference_path=None):
+    """
+    Load ISCO reference file with occupation titles
+    
+    Args:
+        reference_path (str): Path to the reference file. If None, uses default path.
+        
+    Returns:
+        dict: Dictionary mapping ISCO codes to occupation titles
+    """
+    if reference_path is None:
+        reference_path = os.path.join(
+            os.path.dirname(os.path.dirname(os.path.abspath(__file__))),
+            "data/reference/isco08_reference.csv"
+        )
+    
+    if not os.path.exists(reference_path):
+        logger.warning(f"ISCO reference file not found at {reference_path}")
+        return {}
+    
+    try:
+        # Try different encodings since CSV files can have various encodings
+        for encoding in ['utf-8', 'latin-1', 'windows-1252', 'ISO-8859-1']:
+            try:
+                isco_df = pd.read_csv(reference_path, encoding=encoding)
+                break
+            except UnicodeDecodeError:
+                continue
+        
+        # Check if the expected columns exist
+        if 'ISCO 08 Code' not in isco_df.columns or 'Title EN' not in isco_df.columns:
+            # Try with "code" and "title" columns instead
+            if 'code' in isco_df.columns and 'title' in isco_df.columns:
+                code_to_title = dict(zip(isco_df["code"].astype(str), isco_df["title"]))
+                logger.info(f"Loaded {len(code_to_title)} ISCO codes with titles from reference file")
+                return code_to_title
+            else:
+                logger.warning("Expected columns not found in reference file")
+                return {}
+        
+        # Create a dictionary mapping codes to titles
+        code_to_title = {}
+        for _, row in isco_df.iterrows():
+            if pd.notna(row['ISCO 08 Code']) and pd.notna(row['Title EN']):
+                code = str(row['ISCO 08 Code']).strip()
+                title = str(row['Title EN']).strip()
+                
+                # Skip empty or non-numeric codes
+                if code and code.isdigit():
+                    code_to_title[code] = title
+                    
+        logger.info(f"Loaded {len(code_to_title)} ISCO codes with titles from reference file")
+        return code_to_title
+        
+    except Exception as e:
+        logger.warning(f"Error loading ISCO reference file: {e}")
+        return {}

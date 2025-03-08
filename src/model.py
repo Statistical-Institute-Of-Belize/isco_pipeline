@@ -990,17 +990,83 @@ def train_model_with_params(model, train_dataset, val_dataset, config):
     
     return trainer
 
-def save_best_model(trainer, best_model_dir, label2id, code_metadata=None):
+def save_best_model(trainer, best_model_dir, label2id, code_metadata=None, force_save=False):
     """
-    Save the best model and label mappings
+    Save the model to best_model_dir only if it's better than the existing model.
     
     Args:
         trainer: Trained model trainer
         best_model_dir (str): Directory to save the best model
         label2id (dict): Label to ID mapping
         code_metadata (dict, optional): Metadata for ISCO codes
+        force_save (bool, optional): Force saving even if the model isn't better
     """
-    # Ensure directory exists
+    # Check if we should update the best model
+    should_update = force_save
+    best_model_metrics_path = os.path.join(best_model_dir, "metrics.json")
+    
+    # Create metrics for current model
+    current_metrics = {}
+    if hasattr(trainer, "state") and hasattr(trainer.state, "log_history") and trainer.state.log_history:
+        # Extract the latest evaluation metrics
+        eval_entries = [entry for entry in trainer.state.log_history if "eval_loss" in entry]
+        
+        if eval_entries:
+            # Get the best metrics
+            best_eval_entry = min(eval_entries, key=lambda x: x["eval_loss"])
+            current_metrics = {
+                "eval_loss": best_eval_entry["eval_loss"],
+                "eval_accuracy": best_eval_entry.get("eval_accuracy", 0),
+                "date": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                "num_labels": len(label2id),
+                "epochs": len(eval_entries)
+            }
+    
+    # If best model directory doesn't exist, create it and save the model
+    if not os.path.exists(best_model_dir):
+        should_update = True
+        logger.info("No existing best model found. Creating new best model.")
+    else:
+        # Check if there are existing metrics
+        if os.path.exists(best_model_metrics_path):
+            try:
+                with open(best_model_metrics_path, 'r') as f:
+                    existing_metrics = json.load(f)
+                
+                # Compare current metrics with existing metrics
+                if current_metrics and "eval_loss" in current_metrics and "eval_loss" in existing_metrics:
+                    # Lower loss is better
+                    current_loss = current_metrics["eval_loss"]
+                    existing_loss = existing_metrics["eval_loss"]
+                    
+                    # Only update if current model is better (lower loss)
+                    if current_loss < existing_loss:
+                        should_update = True
+                        improvement = (existing_loss - current_loss) / existing_loss * 100
+                        logger.info(f"New model is better! Loss improved from {existing_loss:.5f} to {current_loss:.5f} ({improvement:.2f}% improvement)")
+                    else:
+                        loss_difference = (current_loss - existing_loss) / existing_loss * 100
+                        logger.warning(f"Current model is worse than the existing best model. Loss: {current_loss:.5f} vs {existing_loss:.5f} ({loss_difference:.2f}% worse)")
+                        logger.warning("Not updating best model. To force update, set force_save=True")
+                else:
+                    # If metrics are incomplete, default to updating
+                    should_update = True
+                    logger.info("Metrics comparison unavailable. Updating best model by default.")
+            except Exception as e:
+                # If there's an error reading metrics, default to updating
+                should_update = True
+                logger.warning(f"Error reading existing metrics: {e}. Updating best model by default.")
+        else:
+            # If no metrics file exists, assume we should update
+            should_update = True
+            logger.info("No metrics found for existing model. Updating best model by default.")
+    
+    # Only proceed with saving if we should update
+    if not should_update:
+        logger.info("Best model not updated. Current model is not better than the existing one.")
+        return False
+        
+    # We're updating the best model - ensure directory exists
     ensure_dir(best_model_dir)
     
     # Create id2label mapping
@@ -1097,6 +1163,14 @@ def save_best_model(trainer, best_model_dir, label2id, code_metadata=None):
         # Save hierarchy
         with open(os.path.join(best_model_dir, "code_hierarchy.json"), "w") as f:
             json.dump(hierarchy, f, indent=2)
+            
+    # Save metrics for the current model
+    if current_metrics:
+        with open(best_model_metrics_path, 'w') as f:
+            json.dump(current_metrics, f, indent=2)
+    
+    logger.info("Best model successfully updated")
+    return True
 
 def train_model(config):
     """
@@ -1206,8 +1280,17 @@ def train_model(config):
     trainer.save_model(final_checkpoint_dir)
     logger.info(f"Final model saved to {final_checkpoint_dir}")
     
-    # Save to best_model directory with code metadata
-    save_best_model(trainer, config["output"]["best_model_dir"], label2id, code_metadata)
+    # Check if we should force update the best model
+    force_update = config.get("training", {}).get("force_update_best", False)
+    
+    # Save to best_model directory with code metadata only if it's better than existing model
+    # Use force_update to determine whether to force save
+    saved = save_best_model(trainer, config["output"]["best_model_dir"], label2id, code_metadata, force_save=force_update)
+    
+    if saved:
+        logger.info(f"Updated best model in {config['output']['best_model_dir']}")
+    else:
+        logger.warning("New model was not better than existing best model. Best model directory not updated.")
     
     return trainer, label2id, code_metadata
 
