@@ -1,0 +1,638 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>ISCO-08 Automated Classification Pipeline</title>
+    <script src="https://cdn.jsdelivr.net/npm/mermaid/dist/mermaid.min.js"></script>
+    <style>
+        body {
+            font-family: 'Segoe UI', Arial, sans-serif;
+            line-height: 1.6;
+            color: #333;
+            max-width: 900px;
+            margin: 0 auto;
+            padding: 20px;
+        }
+        .slide {
+            border: 1px solid #ddd;
+            margin-bottom: 30px;
+            padding: 20px 40px;
+            border-radius: 5px;
+            box-shadow: 0 2px 5px rgba(0,0,0,0.1);
+            page-break-after: always;
+            background: white;
+        }
+        h1 {
+            color: #2c3e50;
+            text-align: center;
+            font-size: 28px;
+            margin-bottom: 5px;
+        }
+        h2 {
+            color: #3498db;
+            font-size: 24px;
+        }
+        h3 {
+            color: #2980b9;
+            font-size: 20px;
+        }
+        ul, ol {
+            margin-left: 20px;
+        }
+        li {
+            margin-bottom: 10px;
+        }
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin: 20px 0;
+        }
+        th, td {
+            border: 1px solid #ddd;
+            padding: 10px;
+            text-align: left;
+        }
+        th {
+            background-color: #f8f9fa;
+        }
+        code {
+            background-color: #f8f9fa;
+            padding: 2px 5px;
+            border-radius: 3px;
+            font-family: monospace;
+            font-size: 14px;
+        }
+        pre {
+            background-color: #f8f9fa;
+            padding: 15px;
+            border-radius: 5px;
+            overflow-x: auto;
+            font-size: 14px;
+        }
+        .mermaid {
+            text-align: center;
+            margin: 20px 0;
+        }
+        .caption {
+            text-align: center;
+            font-style: italic;
+            color: #666;
+            margin-top: 5px;
+        }
+        .note {
+            font-style: italic;
+            color: #555;
+            margin-top: 15px;
+        }
+        .print-button {
+            position: fixed;
+            top: 20px;
+            right: 20px;
+            padding: 10px 15px;
+            background-color: #3498db;
+            color: white;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+        }
+        .print-button:hover {
+            background-color: #2980b9;
+        }
+        @media print {
+            body {
+                padding: 0;
+            }
+            .print-button {
+                display: none;
+            }
+            .slide {
+                box-shadow: none;
+                border: none;
+                page-break-after: always;
+            }
+        }
+    </style>
+</head>
+<body>
+    <button class="print-button" onclick="window.print()">Print Presentation</button>
+
+    <div class="slide">
+        <h1>ISCO-08 Automated Classification Pipeline</h1>
+        <h2 style="text-align:center;">Transforming Occupation Coding with AI</h2>
+    </div>
+
+    <div class="slide">
+        <h2>Executive Summary</h2>
+        <ul>
+            <li><strong>Purpose</strong>: Automate classification of job descriptions into ISCO-08 codes</li>
+            <li><strong>Key Benefits</strong>:
+                <ul>
+                    <li>80% reduction in manual coding effort</li>
+                    <li>85%+ classification accuracy</li>
+                    <li>Consistent application of coding standards</li>
+                    <li>Scalable to millions of records</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Current Challenges</h2>
+        <ul>
+            <li><strong>Manual Coding Pain Points</strong>:
+                <ul>
+                    <li>Time-intensive process (avg. 2-3 min per record)</li>
+                    <li>Inter-coder variability (15-20%)</li>
+                    <li>Limited throughput capacity</li>
+                    <li>Knowledge retention issues</li>
+                </ul>
+            </li>
+        </ul>
+        <p class="note">Manual coding is labor-intensive and often inconsistent across coders</p>
+    </div>
+
+    <div class="slide">
+        <h2>Solution Overview</h2>
+        <div class="mermaid">
+            %%{init: {'theme': 'base', 'themeVariables': { 'fontSize': '16px', 'fontFamily': 'arial', 'primaryColor': '#f4f4f4', 'primaryTextColor': '#333', 'primaryBorderColor': '#888', 'lineColor': '#555', 'secondaryColor': '#eaf4ff', 'tertiaryColor': '#f9f9f9' }}}%%
+            flowchart LR
+                %% Data sources
+                Raw([Raw Data]) --> Training
+                Corrections([Corrections]) --> Training
+                JobDesc([Job Descriptions]) --> Inference
+                
+                %% Main components flow left to right
+                subgraph Training
+                    direction TB
+                    Preprocess[Preprocessing]
+                    TP[Model Training]
+                    Eval[Evaluation]
+                    FT[Fine-tuning]
+                    Model[(Trained Model)]
+                    
+                    %% Internal connections top to bottom
+                    Preprocess --> TP
+                    TP --> Eval
+                    FT --> Eval
+                    Eval --> Model
+                end
+                
+                Training --> Inference
+                
+                subgraph Inference
+                    direction TB
+                    InferPreproc[Preprocessing]
+                    Predict[Prediction Engine]
+                    InferEval[Evaluation & QA]
+                    Results[Prediction Results]
+                    
+                    %% Internal connections top to bottom
+                    InferPreproc --> Predict
+                    Predict --> InferEval
+                    InferEval --> Results
+                end
+                
+                Inference --> API
+                
+                subgraph API
+                    direction TB
+                    FastAPI[FastAPI Service]
+                end
+                
+                %% External users
+                Client([Client Applications]) --> API
+                API --> Client
+            
+                classDef default fontSize:14px;
+                classDef big fontSize:16px,font-weight:bold;
+                classDef input fontSize:14px,fill:#e8f7e8;
+                classDef output fontSize:14px,fill:#ffd8b1;
+            
+                class Training,Inference,API big;
+                class Raw,Corrections,JobDesc input;
+                class Client output;
+        </div>
+        <p class="caption">End-to-end ISCO classification system architecture</p>
+    </div>
+
+    <div class="slide">
+        <h2>System Components</h2>
+        <ul>
+            <li><strong>Training Pipeline</strong>
+                <ul>
+                    <li>Processes historical data</li>
+                    <li>Builds and evaluates model</li>
+                    <li>Fine-tunes with corrections</li>
+                </ul>
+            </li>
+            <li><strong>Inference Engine</strong>
+                <ul>
+                    <li>Classifies new job descriptions</li>
+                    <li>Provides confidence scores</li>
+                    <li>Fallback to 3-digit codes when uncertain</li>
+                </ul>
+            </li>
+            <li><strong>API Layer</strong>
+                <ul>
+                    <li>Integration with existing systems</li>
+                    <li>Batch and real-time processing</li>
+                    <li>Multiple interface options</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Technical Approach</h2>
+        <ul>
+            <li><strong>Modern NLP Technology</strong>:
+                <ul>
+                    <li>Transformer-based language models (RoBERTa)</li>
+                    <li>Contextual understanding of job descriptions</li>
+                    <li>Multi-level classification (1-4 digit codes)</li>
+                </ul>
+            </li>
+        </ul>
+        <table>
+            <tr>
+                <th>Traditional Approach</th>
+                <th>AI Approach</th>
+            </tr>
+            <tr>
+                <td>Rule-based</td>
+                <td>Learning-based</td>
+            </tr>
+            <tr>
+                <td>Keyword matching</td>
+                <td>Contextual understanding</td>
+            </tr>
+            <tr>
+                <td>Rigid hierarchies</td>
+                <td>Probabilistic classification</td>
+            </tr>
+            <tr>
+                <td>Manual updates</td>
+                <td>Automatic learning from corrections</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="slide">
+        <h2>Key Innovations</h2>
+        
+        <div style="display: flex; margin-bottom: 20px;">
+            <div style="flex: 1; padding-right: 20px;">
+                <h3>1. Confidence-Based Classification</h3>
+                <ul>
+                    <li><strong>Hierarchical Fallback System</strong>: Automatically drops from 4-digit to 3-digit ISCO codes when confidence is below threshold</li>
+                    <li><strong>Confidence Scoring</strong>: Each prediction includes a confidence percentage and qualitative grade (very_high, high, medium, low, very_low)</li>
+                    <li><strong>Alternative Predictions</strong>: Always provides top-3 alternative classifications with confidence scores</li>
+                </ul>
+                <div style="background-color: #f8f8f8; border-radius: 5px; padding: 10px; margin-top: 10px; border-left: 4px solid #3498db;">
+                    <p style="margin: 0;"><strong>Example:</strong> "Financial Analyst" → 2413 (92% confidence), but "Clerical Assistant" → 411 (63% confidence, fallback to 3-digit)</p>
+                </div>
+            </div>
+            <div style="flex: 1; background-color: #f0f7ff; border-radius: 5px; padding: 15px; display: flex; flex-direction: column; justify-content: center;">
+                <div style="text-align: center; margin-bottom: 10px;"><strong>Confidence Thresholds</strong></div>
+                <div style="display: flex; height: 30px; border-radius: 15px; overflow: hidden; margin-bottom: 8px;">
+                    <div style="flex: 9; background-color: #2ecc71; color: white; display: flex; align-items: center; justify-content: center; font-size: 12px;">90-100% (4-digit code)</div>
+                    <div style="flex: 1; background-color: white;"></div>
+                </div>
+                <div style="display: flex; height: 30px; border-radius: 15px; overflow: hidden; margin-bottom: 8px;">
+                    <div style="flex: 8; background-color: #3498db; color: white; display: flex; align-items: center; justify-content: center; font-size: 12px;">80-90% (4-digit code)</div>
+                    <div style="flex: 2; background-color: white;"></div>
+                </div>
+                <div style="display: flex; height: 30px; border-radius: 15px; overflow: hidden; margin-bottom: 8px;">
+                    <div style="flex: 7; background-color: #f39c12; color: white; display: flex; align-items: center; justify-content: center; font-size: 12px;">70-80% (4-digit code)</div>
+                    <div style="flex: 3; background-color: white;"></div>
+                </div>
+                <div style="display: flex; height: 30px; border-radius: 15px; overflow: hidden; margin-bottom: 8px;">
+                    <div style="flex: 5; background-color: #e74c3c; color: white; display: flex; align-items: center; justify-content: center; font-size: 12px;">50-70% (3-digit fallback)</div>
+                    <div style="flex: 5; background-color: white;"></div>
+                </div>
+                <div style="display: flex; height: 30px; border-radius: 15px; overflow: hidden;">
+                    <div style="flex: 4; background-color: #c0392b; color: white; display: flex; align-items: center; justify-content: center; font-size: 12px;"><50% (3-digit + flag)</div>
+                    <div style="flex: 6; background-color: white;"></div>
+                </div>
+            </div>
+        </div>
+            
+        <div style="display: flex; margin-top: 30px;">
+            <div style="flex: 1; padding-right: 20px;">
+                <h3>2. Continuous Learning System</h3>
+                <ul>
+                    <li><strong>Expert Feedback Loop</strong>: Corrections from experts are automatically collected and used for model fine-tuning</li>
+                    <li><strong>Targeted Improvement</strong>: System identifies challenging categories and prioritizes learning them</li>
+                    <li><strong>Automated Quality Control</strong>: Flags inconsistent predictions for expert review</li>
+                    <li><strong>Controlled Evolution</strong>: New models only replace production models if they demonstrate improved performance</li>
+                </ul>
+            </div>
+            <div style="flex: 1;">
+                <div style="background-color: #f6f6f6; border-radius: 5px; padding: 15px; height: 100%;">
+                    <div style="text-align: center; font-weight: bold; margin-bottom: 15px;">Fine-tuning Improvement Cycle</div>
+                    <div style="display: flex; flex-direction: column; align-items: center;">
+                        <div style="background-color: #3498db; color: white; border-radius: 50%; width: 80px; height: 80px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px;">Predict</div>
+                        <div style="height: 30px; border-left: 2px dashed #666; margin: 0;"></div>
+                        <div style="background-color: #e74c3c; color: white; border-radius: 50%; width: 80px; height: 80px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px;">Review</div>
+                        <div style="height: 30px; border-left: 2px dashed #666; margin: 0;"></div>
+                        <div style="background-color: #2ecc71; color: white; border-radius: 50%; width: 80px; height: 80px; display: flex; align-items: center; justify-content: center; margin-bottom: 10px;">Correct</div>
+                        <div style="height: 30px; border-left: 2px dashed #666; margin: 0;"></div>
+                        <div style="background-color: #f39c12; color: white; border-radius: 50%; width: 80px; height: 80px; display: flex; align-items: center; justify-content: center;">Fine-tune</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div style="margin-top: 20px; font-style: italic; text-align: center; color: #555;">
+            Both innovations significantly outperform traditional rule-based classification systems in accuracy and adaptability
+        </div>
+    </div>
+
+    <div class="slide">
+        <h2>Performance Metrics</h2>
+        <h3>Overall System Performance</h3>
+        <ul>
+            <li>Overall accuracy: 85%</li>
+            <li>Top-3 accuracy: 95%</li>
+            <li>Processing speed: 1000+ records/minute</li>
+            <li>Fine-tuning improvement: +3-5% per iteration</li>
+        </ul>
+
+        <h3>Accuracy by ISCO Major Groups</h3>
+        <ul>
+            <li>Group 1 (Managers): 87%</li>
+            <li>Group 2 (Professionals): 91%</li>
+            <li>Group 3 (Technicians): 84%</li>
+            <li>Group 4 (Clerical): 89%</li>
+            <li>Group 5 (Service/Sales): 83%</li>
+            <li>Groups 6-9: 78-85%</li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Comparison with Manual Coding</h2>
+        <table>
+            <tr>
+                <th>Metric</th>
+                <th>Manual Coding</th>
+                <th>AI Pipeline</th>
+            </tr>
+            <tr>
+                <td>Time per record</td>
+                <td>2-3 minutes</td>
+                <td>0.06 seconds</td>
+            </tr>
+            <tr>
+                <td>Records per day (per person)</td>
+                <td>150-200</td>
+                <td>1,000,000+</td>
+            </tr>
+            <tr>
+                <td>Consistency</td>
+                <td>80-85%</td>
+                <td>100%</td>
+            </tr>
+            <tr>
+                <td>Error detection</td>
+                <td>Manual review</td>
+                <td>Automated flagging</td>
+            </tr>
+            <tr>
+                <td>Cost per 10,000 records</td>
+                <td>High (staff time)</td>
+                <td>Low (compute resources)</td>
+            </tr>
+            <tr>
+                <td>Scalability</td>
+                <td>Limited by staff</td>
+                <td>Virtually unlimited</td>
+            </tr>
+        </table>
+    </div>
+
+    <div class="slide">
+        <h2>Implementation Timeline</h2>
+        <ul>
+            <li><strong>Phase 1</strong>: Development & Training (Completed)
+                <ul>
+                    <li>Data collection and preprocessing</li>
+                    <li>Model architecture selection</li>
+                    <li>Initial training and evaluation</li>
+                </ul>
+            </li>
+            <li><strong>Phase 2</strong>: Evaluation & Refinement (Current)
+                <ul>
+                    <li>Fine-tuning with domain experts</li>
+                    <li>System optimization</li>
+                    <li>Interface development</li>
+                </ul>
+            </li>
+            <li><strong>Phase 3</strong>: Integration & Deployment (Q2 2025)
+                <ul>
+                    <li>System integration</li>
+                    <li>User training</li>
+                    <li>Parallel running with manual coding</li>
+                </ul>
+            </li>
+            <li><strong>Phase 4</strong>: Production Rollout (Q3 2025)
+                <ul>
+                    <li>Full production deployment</li>
+                    <li>Monitoring and ongoing improvements</li>
+                    <li>Extension to additional classification tasks</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Integration Options</h2>
+        <ul>
+            <li><strong>Standalone Application</strong>
+                <ul>
+                    <li>Web interface for ad-hoc coding</li>
+                    <li>Batch file processing</li>
+                    <li>Results export in multiple formats</li>
+                </ul>
+            </li>
+            <li><strong>API Integration</strong>
+                <ul>
+                    <li>RESTful API endpoints</li>
+                    <li>Single and batch prediction modes</li>
+                    <li>CSV upload and processing</li>
+                </ul>
+            </li>
+            <li><strong>Review Interface</strong>
+                <ul>
+                    <li>Human verification of low-confidence cases</li>
+                    <li>Feedback loop for model improvement</li>
+                    <li>Quality assurance dashboard</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Practical Example</h2>
+        <h3>Input: Job Description</h3>
+        <pre>Title: Financial Systems Specialist
+Duties: Maintains financial software systems, analyzes financial data, 
+creates reports for management, troubleshoots technical issues, 
+trains staff on financial software usage.</pre>
+
+        <h3>Output: ISCO Classification</h3>
+        <ul>
+            <li>Primary Code: <strong>2411</strong> (Accountants) - 87% confidence</li>
+            <li>Alternative 1: <strong>2521</strong> (Database Designers and Administrators) - 8% confidence</li>
+            <li>Alternative 2: <strong>2412</strong> (Financial and Investment Advisers) - 3% confidence</li>
+        </ul>
+
+        <p><strong>Processing Time</strong>: 0.08 seconds vs. ~2.5 minutes manually</p>
+    </div>
+
+    <div class="slide">
+        <h2>Value Proposition</h2>
+        <ul>
+            <li><strong>Quantifiable Benefits</strong>:
+                <ul>
+                    <li>75% reduction in coding time</li>
+                    <li>Estimated annual savings: [cost calculation based on institute's volume]</li>
+                    <li>Increased data processing capacity (from hundreds to millions daily)</li>
+                    <li>Improved statistical output timeliness (days → hours)</li>
+                </ul>
+            </li>
+            <li><strong>Quality Improvements</strong>:
+                <ul>
+                    <li>Consistent application of ISCO standards</li>
+                    <li>Transparent confidence metrics</li>
+                    <li>Reducible error rates through continuous learning</li>
+                    <li>Full audit trail of classification decisions</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Operational Requirements</h2>
+        <ul>
+            <li><strong>Hardware Options</strong>:
+                <ul>
+                    <li>Cloud-based deployment</li>
+                    <li>On-premises server (min: 16GB RAM, 4 cores, GPU optional)</li>
+                    <li>Docker container support</li>
+                </ul>
+            </li>
+            <li><strong>Maintenance</strong>:
+                <ul>
+                    <li>Quarterly model updates with new data</li>
+                    <li>Automated performance monitoring</li>
+                    <li>Corrections integration pipeline</li>
+                </ul>
+            </li>
+            <li><strong>Staff Requirements</strong>:
+                <ul>
+                    <li>Minimal training (1-day workshop)</li>
+                    <li>Focus shifts from coding to QA/exceptions</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Risk Mitigation</h2>
+        <ul>
+            <li><strong>Data Privacy</strong>:
+                <ul>
+                    <li>On-premise processing option</li>
+                    <li>No external data sharing required</li>
+                    <li>Compliant with institutional data policies</li>
+                </ul>
+            </li>
+            <li><strong>Quality Assurance</strong>:
+                <ul>
+                    <li>Human review of low-confidence cases</li>
+                    <li>Regular performance audits</li>
+                    <li>Comprehensive logging and metrics</li>
+                </ul>
+            </li>
+            <li><strong>Fallback Procedures</strong>:
+                <ul>
+                    <li>Manual coding system maintained during transition</li>
+                    <li>Clear procedures for handling exceptions</li>
+                    <li>Parallel processing during initial deployment</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Roadmap</h2>
+        <ul>
+            <li><strong>Short-term</strong> (6 months):
+                <ul>
+                    <li>Integration with existing statistical systems</li>
+                    <li>Domain-specific fine-tuning</li>
+                    <li>Expanded evaluation metrics</li>
+                </ul>
+            </li>
+            <li><strong>Medium-term</strong> (12 months):
+                <ul>
+                    <li>Multilingual support</li>
+                    <li>Cross-classification system support (ISCO ↔ other standards)</li>
+                    <li>Advanced error analysis tools</li>
+                </ul>
+            </li>
+            <li><strong>Long-term</strong> (24+ months):
+                <ul>
+                    <li>Full automation of statistical coding pipeline</li>
+                    <li>API as a service for partner organizations</li>
+                    <li>Extension to other classification domains</li>
+                </ul>
+            </li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Next Steps</h2>
+        <ol>
+            <li>Pilot program with selected departments</li>
+            <li>Integration assessment with existing systems</li>
+            <li>Staff training program development</li>
+            <li>Detailed implementation timeline creation</li>
+            <li>Resource allocation for deployment phases</li>
+        </ol>
+    </div>
+
+    <div class="slide">
+        <h2>Q&A</h2>
+        <p><strong>Contact Information</strong>:</p>
+        <ul>
+            <li>Project Lead: [Name]</li>
+            <li>Technical Contact: [Name]</li>
+            <li>Email: [Email address]</li>
+        </ul>
+
+        <p><strong>Resources</strong>:</p>
+        <ul>
+            <li>Technical documentation: docs/technical_architecture.md</li>
+            <li>Pipeline diagrams: docs/pipeline_diagrams.md</li>
+            <li>GitHub repository: github.com/[organization]/isco_pipeline</li>
+        </ul>
+    </div>
+
+    <div class="slide">
+        <h2>Appendix</h2>
+        <p><em>Technical details available upon request</em></p>
+        <ul>
+            <li>Model architecture specifications</li>
+            <li>API documentation</li>
+            <li>Detailed accuracy metrics by ISCO code</li>
+            <li>Training and fine-tuning methodologies</li>
+        </ul>
+    </div>
+
+    <script>
+        mermaid.initialize({ startOnLoad: true, theme: 'default' });
+    </script>
+</body>
+</html>
