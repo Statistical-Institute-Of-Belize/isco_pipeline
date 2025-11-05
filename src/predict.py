@@ -3,10 +3,11 @@ import json
 import pandas as pd
 import torch
 import logging
-import shap
+import numpy as np
 from datetime import datetime
 from functools import lru_cache
 from transformers import RobertaTokenizer, RobertaForSequenceClassification
+import html
 
 from .utils import load_config, ensure_dir
 
@@ -158,7 +159,14 @@ def predict_batch(texts, model, tokenizer, label_map, config, explain=False):
     # Generate explanations if requested
     if explain:
         sample_size = min(config["explainability"]["sample_size"], len(texts))
-        generate_explanations(texts[:sample_size], model, tokenizer, config["data"]["processed_dir"])
+        max_len = config["model"].get("max_seq_length", 160) if "model" in config else 160
+        generate_explanations(
+            texts[:sample_size],
+            model,
+            tokenizer,
+            config["data"]["processed_dir"],
+            max_length=max_len
+        )
     
     return predictions
 
@@ -184,78 +192,132 @@ def flag_low_confidence(predictions, review_dir):
         low_conf_df.to_csv(output_path, index=False)
         logger.info(f"Flagged {len(low_confidence)} low-confidence predictions to {output_path}")
 
-def generate_explanations(texts, model, tokenizer, output_dir):
+def generate_explanations(texts, model, tokenizer, output_dir, max_length=160):
     """
-    Generate SHAP explanations for sample texts
-    
+    Generate attention-based explanations for sample texts.
+
     Args:
         texts (list): List of text strings
         model: The model to use
         tokenizer: The tokenizer to use
         output_dir (str): Directory to save explanations
     """
-    logger.info(f"Generating explanations for {len(texts)} samples")
-    
-    # Ensure output directory exists
+    logger.info(f"Generating attention-based explanations for {len(texts)} samples")
+
     explanation_dir = os.path.join(output_dir, "explanations")
     ensure_dir(explanation_dir)
-    
+
+    was_training = model.training
+    model.eval()
+
     try:
-        # Create a simple explanation file instead of using SHAP
-        # SHAP is complex to set up correctly with transformer models
         for i, text in enumerate(texts):
-            # Tokenize to show important parts
-            tokens = tokenizer.tokenize(text)
-            
-            # Create a simple HTML explanation
-            html_content = f"""
-            <html>
-            <head>
-                <title>Explanation for prediction {i}</title>
-                <style>
-                    body {{ font-family: Arial, sans-serif; margin: 20px; }}
-                    .token {{ margin: 2px; padding: 2px; display: inline-block; }}
-                    .important {{ background-color: rgba(255, 0, 0, 0.2); }}
-                    .medium {{ background-color: rgba(255, 165, 0, 0.2); }}
-                    .low {{ background-color: rgba(255, 255, 0, 0.2); }}
-                </style>
-            </head>
-            <body>
-                <h1>Explanation for Text Sample {i}</h1>
-                <p>Original text: {text}</p>
-                <h2>Tokenized text:</h2>
-                <div>
-            """
-            
-            # Add tokens with random importance for demonstration
-            for token in tokens:
-                import random
-                r = random.random()
-                if r > 0.8:
-                    importance_class = "important"
-                elif r > 0.5:
-                    importance_class = "medium"
-                else:
-                    importance_class = "low"
-                
-                html_content += f'<span class="token {importance_class}">{token}</span>'
-            
-            html_content += """
-                </div>
-                <p>Note: This is a simplified visualization. In a production system, SHAP values would indicate actual token importance.</p>
-            </body>
-            </html>
-            """
-            
-            # Save explanation as HTML
+            inputs = tokenizer(
+                text,
+                return_tensors="pt",
+                truncation=True,
+                max_length=max_length
+            )
+            inputs = {key: value.to(model.device) for key, value in inputs.items()}
+
+            with torch.no_grad():
+                outputs = model(**inputs, output_attentions=True)
+
+            attentions = outputs.attentions
+            if not attentions:
+                logger.warning("Model did not return attentions; skipping explanation for sample %d", i)
+                continue
+
+            attention_tensor = torch.stack(attentions).mean(dim=(0, 2))  # average layers & heads
+            cls_attention = attention_tensor[0, 0]
+
+            attention_mask = inputs.get("attention_mask")
+            if attention_mask is None:
+                logger.warning("Missing attention mask; skipping explanation for sample %d", i)
+                continue
+
+            valid_positions = attention_mask[0].nonzero(as_tuple=True)[0].tolist()
+            if len(valid_positions) <= 2:
+                logger.warning("Not enough tokens for explanation for sample %d", i)
+                continue
+
+            token_indices = valid_positions[1:]  # skip CLS
+            token_scores = cls_attention[token_indices].detach().cpu().numpy()
+            token_ids = inputs["input_ids"][0, token_indices].detach().cpu().tolist()
+            tokens = tokenizer.convert_ids_to_tokens(token_ids)
+
+            # Filter out trailing separator token
+            if tokens and tokens[-1] in {tokenizer.sep_token, "</s>"}:
+                tokens = tokens[:-1]
+                token_scores = token_scores[:-1]
+
+            if not len(tokens):
+                logger.warning("No tokens available after filtering for sample %d", i)
+                continue
+
+            scores = token_scores - token_scores.min()
+            if np.max(scores) > 0:
+                scores = scores / (np.max(scores) + 1e-8)
+            else:
+                scores = np.zeros_like(scores)
+
+            def score_to_class(value: float) -> str:
+                if value >= 0.66:
+                    return "high"
+                if value >= 0.33:
+                    return "medium"
+                return "low"
+
+            html_content = [
+                "<html>",
+                "<head>",
+                f"<title>Explanation for prediction {i}</title>",
+                "<style>",
+                "body { font-family: Arial, sans-serif; margin: 20px; }",
+                ".token { margin: 2px; padding: 2px 4px; display: inline-block; border-radius: 4px; white-space: pre; }",
+                ".high { background-color: rgba(255, 0, 0, 0.25); }",
+                ".medium { background-color: rgba(255, 165, 0, 0.25); }",
+                ".low { background-color: rgba(255, 255, 0, 0.2); }",
+                ".score { font-size: 0.8em; color: #555; margin-left: 4px; }",
+                "</style>",
+                "</head>",
+                "<body>",
+                f"<h1>Attention overview for text sample {i}</h1>",
+                f"<p>Original text: {html.escape(text)}</p>",
+                "<h2>Token attention (CLS-based heuristic)</h2>",
+                "<div>"
+            ]
+
+            for token, score in zip(tokens, scores):
+                token_class = score_to_class(float(score))
+                pretty_token = tokenizer.convert_tokens_to_string([token])
+                if not pretty_token:
+                    pretty_token = token.replace("Ġ", " ")
+                display_token = html.escape(pretty_token)
+                if display_token.strip() == "":
+                    display_token = "&nbsp;"
+                html_content.append(
+                    f'<span class="token {token_class}">{display_token}<span class="score">{score:.2f}</span></span>'
+                )
+
+            html_content.extend([
+                "</div>",
+                "<p>Scores reflect averaged CLS attention weights as a heuristic and are not SHAP values.</p>",
+                "</body>",
+                "</html>"
+            ])
+
             output_path = os.path.join(explanation_dir, f"explanation_{i}.html")
-            with open(output_path, 'w') as f:
-                f.write(html_content)
-            
-            logger.info(f"Saved explanation for sample {i} to {output_path}")
-    
+            with open(output_path, "w") as f:
+                f.write("\n".join(html_content))
+
+            logger.info(f"Saved attention explanation for sample {i} to {output_path}")
+
     except Exception as e:
         logger.error(f"Failed to generate explanations: {e}")
+
+    finally:
+        model.train(was_training)
 
 def load_model_and_mappings(model_dir):
     """

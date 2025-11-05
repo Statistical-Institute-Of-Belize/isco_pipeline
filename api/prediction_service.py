@@ -1,7 +1,8 @@
-import torch
 import sys
 import os
-from typing import Dict, List, Tuple, Any, Optional
+from typing import Dict, List, Tuple, Any
+
+import pandas as pd
 
 # Configure paths for imports
 script_dir = os.path.dirname(os.path.abspath(__file__))
@@ -9,7 +10,8 @@ project_root = os.path.dirname(script_dir)
 sys.path.append(project_root)
 
 # Import from the original predict.py to ensure consistency
-from src.predict import predict_single, get_confidence_grade
+from src.predict import predict_single
+from src.preprocess import clean_and_combine_text
 
 from .models import (
     JobInput, 
@@ -17,6 +19,13 @@ from .models import (
     AlternativePrediction
 )
 from .config import settings
+
+
+def _format_job_text(job_title: str, duties_description: str) -> str:
+    """Format inputs using the same preprocessing as training."""
+    titles = pd.Series([job_title])
+    descriptions = pd.Series([duties_description])
+    return clean_and_combine_text(titles, descriptions).iloc[0]
 
 
 def predict_single_job(
@@ -45,13 +54,10 @@ def predict_single_job(
         threshold = settings.CONFIDENCE_THRESHOLD
     
     # Combine job title and description - same format as in the CLI pipeline
-    text = f"{job.job_title}. {job.duties_description}"
+    text = _format_job_text(job.job_title, job.duties_description)
     
     # Use the same prediction function as the CLI pipeline for consistency
     result = predict_single(text, model, tokenizer, label_map, threshold)
-    
-    # Convert string label_map keys to integers if needed
-    str_keys_map = {str(k): v for k, v in label_map.items()} if isinstance(next(iter(label_map)), int) else label_map
     
     # Create alternatives list
     alternatives = []
