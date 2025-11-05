@@ -1,18 +1,14 @@
 import os
 import yaml
 import logging
-import traceback
 import pandas as pd
 from functools import lru_cache
 from contextlib import contextmanager
 import torch
 
-# Configure logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
 logger = logging.getLogger(__name__)
+if not logger.handlers:
+    logger.addHandler(logging.NullHandler())
 
 def load_config(config_path="config.yaml"):
     """

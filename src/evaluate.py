@@ -9,6 +9,7 @@ from datetime import datetime
 import matplotlib.pyplot as plt
 import seaborn as sns
 from transformers import RobertaTokenizer, RobertaForSequenceClassification, Trainer
+import traceback
 
 from .utils import load_config, ensure_dir
 from .model import ISCODataset
@@ -401,7 +402,6 @@ def compute_metrics(predictions, label_ids, id2label):
         
     except Exception as e:
         logger.warning(f"Failed to compute 3-digit metrics: {e}")
-        import traceback
         logger.debug(traceback.format_exc())
         metrics["accuracy_3digit"] = 0.0
         metrics["macro_f1_3digit"] = 0.0
@@ -1361,7 +1361,6 @@ def evaluate_model(config):
         
     except Exception as e:
         logger.warning(f"Error performing error analysis: {e}")
-        import traceback
         logger.debug(traceback.format_exc())
     
     return metrics

@@ -1,13 +1,6 @@
-import sys
-import os
-from typing import Dict, List, Tuple, Any
+from typing import Dict, List, Any
 
 import pandas as pd
-
-# Configure paths for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(script_dir)
-sys.path.append(project_root)
 
 # Import from the original predict.py to ensure consistency
 from src.predict import predict_single
@@ -57,7 +50,14 @@ def predict_single_job(
     text = _format_job_text(job.job_title, job.duties_description)
     
     # Use the same prediction function as the CLI pipeline for consistency
-    result = predict_single(text, model, tokenizer, label_map, threshold)
+    result = predict_single(
+        text,
+        model,
+        tokenizer,
+        label_map,
+        threshold,
+        max_length=settings.MAX_SEQ_LENGTH,
+    )
     
     # Create alternatives list
     alternatives = []

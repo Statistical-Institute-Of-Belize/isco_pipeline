@@ -1,15 +1,8 @@
-import os
-import sys
-from typing import Dict, Tuple, Any, Optional
+from typing import Dict, Tuple, Any
 from fastapi import HTTPException, status
 
-# Configure paths for imports
-script_dir = os.path.dirname(os.path.abspath(__file__))
-project_root = os.path.dirname(script_dir)
-sys.path.append(project_root)
-
 # Import from the original modules to maintain consistency
-from src.predict import load_model_and_mappings, get_confidence_grade
+from src.predict import load_model_and_mappings
 from src.utils import load_isco_reference
 from .config import settings
 

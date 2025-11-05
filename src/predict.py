@@ -5,7 +5,8 @@ import torch
 import logging
 import numpy as np
 from datetime import datetime
-from functools import lru_cache
+from collections import OrderedDict
+from typing import Optional, Any
 from transformers import RobertaTokenizer, RobertaForSequenceClassification
 import html
 
@@ -14,8 +15,51 @@ from .utils import load_config, ensure_dir
 # Configure logging
 logger = logging.getLogger(__name__)
 
-# Create a cache dictionary instead of using lru_cache with unhashable parameters
-_prediction_cache = {}
+# Lightweight LRU cache to avoid recalculating identical predictions
+_MAX_CACHE_ENTRIES = 1024
+_prediction_cache: OrderedDict = OrderedDict()
+
+
+def _make_cache_key(
+    text: str,
+    model: Any,
+    threshold: float,
+    label_map: dict,
+    max_length: Optional[int],
+) -> tuple:
+    """Return a cache key that reflects model identity and decoding parameters."""
+
+    model_marker = getattr(model, "name_or_path", None) or getattr(model.config, "_name_or_path", None)
+    if not model_marker:
+        model_marker = id(model)
+
+    label_map_marker = id(label_map)
+
+    return (
+        text,
+        float(threshold),
+        model_marker,
+        label_map_marker,
+        max_length,
+    )
+
+
+def _get_cached_prediction(cache_key: tuple) -> Optional[dict]:
+    """Return cached prediction if present and refresh LRU ordering."""
+
+    if cache_key in _prediction_cache:
+        _prediction_cache.move_to_end(cache_key)
+        return _prediction_cache[cache_key]
+    return None
+
+
+def _store_cached_prediction(cache_key: tuple, prediction: dict) -> None:
+    """Store prediction in cache while enforcing maximum size."""
+
+    _prediction_cache[cache_key] = prediction
+    _prediction_cache.move_to_end(cache_key)
+    if len(_prediction_cache) > _MAX_CACHE_ENTRIES:
+        _prediction_cache.popitem(last=False)
 
 def get_confidence_grade(confidence):
     """
@@ -38,7 +82,14 @@ def get_confidence_grade(confidence):
     else:
         return "very_low"
 
-def predict_single(text, model, tokenizer, label_map, threshold):
+def predict_single(
+    text: str,
+    model,
+    tokenizer,
+    label_map,
+    threshold: float,
+    max_length: Optional[int] = None,
+):
     """
     Predict ISCO code for a single text with caching
     
@@ -52,16 +103,31 @@ def predict_single(text, model, tokenizer, label_map, threshold):
     Returns:
         dict: Prediction result
     """
-    # Use the text as the cache key (assuming same model, tokenizer, and threshold)
-    if text in _prediction_cache:
-        return _prediction_cache[text]
-    # Tokenize text
+    cache_key = _make_cache_key(text, model, threshold, label_map, max_length)
+    cached = _get_cached_prediction(cache_key)
+    if cached is not None:
+        return cached
+
+    effective_max_length = max_length or getattr(model.config, "max_position_embeddings", None)
+    tokenizer_limit = getattr(tokenizer, "model_max_length", None)
+
+    if tokenizer_limit and (
+        effective_max_length is None
+        or effective_max_length <= 0
+        or effective_max_length > tokenizer_limit
+    ):
+        effective_max_length = tokenizer_limit
+
+    if not effective_max_length or effective_max_length >= 1e6:
+        # Hugging Face sometimes reports a sentinel value of 1e30; fall back to tokenizer limit
+        effective_max_length = min(tokenizer_limit or 512, 512)
+
     inputs = tokenizer(
-        text, 
-        return_tensors="pt", 
-        truncation=True, 
+        text,
+        return_tensors="pt",
+        truncation=True,
         padding=True,
-        max_length=128
+        max_length=effective_max_length,
     ).to(model.device)
     
     # Get prediction
@@ -120,41 +186,63 @@ def predict_single(text, model, tokenizer, label_map, threshold):
             result["alternative_2_confidence"] = alt2_confidence
     
     # Store in cache
-    _prediction_cache[text] = result
-    
+    _store_cached_prediction(cache_key, result)
+
     return result
 
-def predict_batch(texts, model, tokenizer, label_map, config, explain=False):
+def predict_batch(
+    texts,
+    model,
+    tokenizer,
+    label_map,
+    config,
+    explain: bool = False,
+    persist_predictions: bool = True,
+    export_review: bool = True,
+):
     """
     Predict ISCO codes for a batch of texts
     
     Args:
-        texts (list): List of text strings
-        model: The model to use
-        tokenizer: The tokenizer to use
-        label_map (dict): ID to label mapping
-        config (dict): Configuration dictionary
-        explain (bool): Whether to generate explanations
+        texts (list): List of text strings.
+        model: The model to use.
+        tokenizer: The tokenizer to use.
+        label_map (dict): ID to label mapping.
+        config (dict): Configuration dictionary.
+        explain (bool): Whether to generate explanations.
+        persist_predictions (bool): Whether to write predictions.csv to disk.
+        export_review (bool): Whether to write low-confidence review files.
         
     Returns:
         list: List of prediction dictionaries
     """
     # Make predictions
     threshold = config["model"]["confidence_threshold"]
+    max_length = config.get("model", {}).get("max_seq_length")
     predictions = []
     for text in texts:
-        prediction = predict_single(text, model, tokenizer, label_map, threshold)
+        prediction = predict_single(
+            text,
+            model,
+            tokenizer,
+            label_map,
+            threshold,
+            max_length=max_length,
+        )
         predictions.append(prediction)
-    
+
     # Save all predictions
-    predictions_df = pd.DataFrame(predictions)
-    processed_dir = config["data"]["processed_dir"]
-    ensure_dir(processed_dir)
-    predictions_df.to_csv(os.path.join(processed_dir, "predictions.csv"), index=False)
-    logger.info(f"Saved {len(predictions)} predictions to {processed_dir}/predictions.csv")
-    
+    processed_dir = config.get("data", {}).get("processed_dir")
+    if persist_predictions and processed_dir:
+        predictions_df = pd.DataFrame(predictions)
+        ensure_dir(processed_dir)
+        predictions_df.to_csv(os.path.join(processed_dir, "predictions.csv"), index=False)
+        logger.info(f"Saved {len(predictions)} predictions to {processed_dir}/predictions.csv")
+
     # Flag low-confidence predictions
-    flag_low_confidence(predictions, config["data"]["review_dir"])
+    review_dir = config.get("data", {}).get("review_dir")
+    if export_review and review_dir:
+        flag_low_confidence(predictions, review_dir)
     
     # Generate explanations if requested
     if explain:
@@ -178,6 +266,10 @@ def flag_low_confidence(predictions, review_dir):
         predictions (list): List of prediction dictionaries
         review_dir (str): Directory to save flagged predictions
     """
+    if not review_dir:
+        logger.debug("No review directory configured; skipping low-confidence export")
+        return
+
     # Filter low-confidence predictions
     low_confidence = [p for p in predictions if p["is_fallback"]]
     

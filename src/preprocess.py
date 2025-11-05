@@ -242,6 +242,196 @@ def validate_isco_codes(df, output_dir, config):
     
     return valid_df
 
+def _prepare_texts_for_embeddings(texts):
+    """Normalize incoming texts and drop empty entries."""
+
+    normalized = [str(text) for text in texts]
+    filtered = [text for text in normalized if text and text.strip()]
+
+    if len(filtered) < len(normalized):
+        logger.debug(
+            "Filtered %d empty or whitespace-only texts before embedding generation",
+            len(normalized) - len(filtered),
+        )
+
+    return filtered
+
+
+def _iter_chunks(items, size):
+    for index in range(0, len(items), size):
+        yield items[index : index + size], index // size + 1
+
+
+def _build_embedding_matrix(tokenizer, model, texts, chunk_size, batch_size, device):
+    from tqdm import tqdm
+    from colorama import Fore, Style
+
+    embeddings = []
+    total_chunks = max(1, (len(texts) - 1) // chunk_size + 1)
+
+    progress_bar = tqdm(
+        total=total_chunks,
+        desc=f"{Fore.BLUE}Generating embeddings{Style.RESET_ALL}",
+        unit="chunk",
+        ncols=80,
+        bar_format="{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]",
+    )
+
+    with torch.no_grad():
+        for chunk, chunk_number in _iter_chunks(texts, chunk_size):
+            logger.debug("Processing embeddings for chunk %d/%d", chunk_number, total_chunks)
+            chunk_embeddings = []
+
+            for batch_start in range(0, len(chunk), batch_size):
+                batch = chunk[batch_start : batch_start + batch_size]
+                batch = [str(text).strip() for text in batch]
+                batch = [text if text else "unknown" for text in batch]
+
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+                elif hasattr(torch.mps, "empty_cache"):
+                    torch.mps.empty_cache()
+
+                inputs = None
+                outputs = None
+
+                try:
+                    inputs = tokenizer(
+                        batch,
+                        return_tensors="pt",
+                        padding=True,
+                        truncation=True,
+                        max_length=128,
+                    )
+                    inputs = {k: v.to(device) for k, v in inputs.items()}
+
+                    outputs = model(**inputs)
+                    batch_embeddings = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
+                    chunk_embeddings.append(batch_embeddings)
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.error("Error processing batch: %s", exc)
+                    logger.error("Problematic batch: %s", batch)
+                finally:
+                    if inputs is not None:
+                        del inputs
+                    if outputs is not None:
+                        del outputs
+
+            if chunk_embeddings:
+                try:
+                    embeddings.append(np.vstack(chunk_embeddings))
+                except Exception as exc:  # pragma: no cover - defensive
+                    logger.error("Error combining chunk embeddings: %s", exc)
+
+            progress_bar.update(1)
+            progress_bar.set_postfix(current=f"Chunk {chunk_number}/{total_chunks}")
+
+            import gc
+
+            gc.collect()
+
+    progress_bar.close()
+
+    if not embeddings:
+        return None
+
+    try:
+        from colorama import Fore, Style
+
+        logger.info(
+            f"{Fore.BLUE}Combining embeddings from {len(embeddings)} chunks...{Style.RESET_ALL}"
+        )
+        matrix = np.vstack(embeddings)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Error combining embeddings: %s", exc)
+        return None
+
+    if matrix.size == 0 or np.isnan(matrix).any():
+        logger.warning("Invalid embeddings detected. Returning default clusters.")
+        return None
+
+    from colorama import Fore, Style
+
+    logger.info(
+        f"{Fore.GREEN}Successfully created embedding matrix of shape {matrix.shape}{Style.RESET_ALL}"
+    )
+    return matrix
+
+
+def _cluster_large_embeddings(embeddings):
+    from sklearn.neighbors import NearestNeighbors
+    from tqdm import tqdm
+    from colorama import Fore, Style
+
+    logger.info(
+        f"{Fore.BLUE}Large embedding matrix detected. Using memory-efficient clustering.{Style.RESET_ALL}"
+    )
+
+    sample_size = min(50000, len(embeddings) // 2 or len(embeddings))
+    logger.info(
+        f"{Fore.BLUE}Sampling {sample_size:,} of {len(embeddings):,} embeddings for initial clustering...{Style.RESET_ALL}"
+    )
+
+    indices = np.random.choice(len(embeddings), sample_size, replace=False)
+    sampled_embeddings = embeddings[indices]
+
+    cluster_progress = tqdm(
+        total=100,
+        desc=f"{Fore.BLUE}DBSCAN clustering{Style.RESET_ALL}",
+        bar_format="{l_bar}{bar}| {elapsed}<{remaining}",
+        ncols=80,
+    )
+
+    clustering = DBSCAN(
+        eps=0.7,
+        min_samples=2,
+        metric="cosine",
+        n_jobs=-1,
+        algorithm="ball_tree",
+    ).fit(sampled_embeddings)
+
+    cluster_progress.n = cluster_progress.total
+    cluster_progress.close()
+
+    core_sample_indices = indices[clustering.core_sample_indices_]
+    core_samples = embeddings[core_sample_indices]
+    core_labels = clustering.labels_[clustering.core_sample_indices_]
+
+    nn = NearestNeighbors(n_neighbors=1, algorithm="ball_tree").fit(core_samples)
+
+    all_labels = np.full(len(embeddings), -1)
+    all_labels[core_sample_indices] = core_labels
+
+    remaining_indices = np.setdiff1d(np.arange(len(embeddings)), core_sample_indices)
+    batch_size = 1000
+
+    for start in range(0, len(remaining_indices), batch_size):
+        batch_indices = remaining_indices[start : start + batch_size]
+        batch_embeddings = embeddings[batch_indices]
+        distances, neighbours = nn.kneighbors(batch_embeddings)
+
+        for position, (dist, neighbour_idx) in enumerate(zip(distances, neighbours)):
+            if dist[0] <= 0.7:  # Same eps threshold as DBSCAN
+                all_labels[batch_indices[position]] = core_labels[neighbour_idx[0]]
+
+    return all_labels
+
+
+def _cluster_embedding_matrix(embeddings):
+    if len(embeddings) > 50000:
+        return _cluster_large_embeddings(embeddings)
+
+    logger.info("Clustering embeddings with standard DBSCAN")
+    clustering = DBSCAN(
+        eps=0.6,
+        min_samples=3,
+        metric="cosine",
+        n_jobs=-1,
+    ).fit(embeddings)
+
+    return clustering.labels_
+
+
 def cluster_embeddings(texts, model_name, chunk_size=64, batch_size=8):
     """
     Cluster texts using embeddings to identify outliers
@@ -259,233 +449,35 @@ def cluster_embeddings(texts, model_name, chunk_size=64, batch_size=8):
     tokenizer = RobertaTokenizer.from_pretrained(model_name)
     model = RobertaModel.from_pretrained(model_name).to(device)
     model.eval()
-    
-    # Convert all texts to strings to prevent tokenization errors
-    texts = [str(text) for text in texts]
-    
-    # Remove any None or empty strings
-    texts = [text for text in texts if text and text.strip()]
-    
-    # If empty after filtering, return default cluster labels
+
+    texts = _prepare_texts_for_embeddings(texts)
     if not texts:
         logger.warning("No valid texts found for clustering. Returning default clusters.")
         return np.zeros(1)
-    
-    # Process in chunks to optimize memory
-    embeddings = []
-    total_chunks = (len(texts) - 1) // chunk_size + 1
-    
-    from tqdm import tqdm
-    from colorama import Fore, Style
-    
-    # Create a progress bar for chunk processing
-    progress_bar = tqdm(
-        total=total_chunks,
-        desc=f"{Fore.BLUE}Generating embeddings{Style.RESET_ALL}",
-        unit="chunk",
-        ncols=80,
-        bar_format='{l_bar}{bar}| {n_fmt}/{total_fmt} [{elapsed}<{remaining}]'
-    )
-    
-    with torch.no_grad():
-        for i in range(0, len(texts), chunk_size):
-            chunk_num = i//chunk_size + 1
-            logger.debug(f"Processing embeddings for chunk {chunk_num}/{total_chunks}")
-            chunk = texts[i:i+chunk_size]
-            chunk_embeddings = []
-            
-            # Further split chunk into batches for better memory management
-            for j in range(0, len(chunk), batch_size):
-                # Free up memory
-                if torch.cuda.is_available():
-                    torch.cuda.empty_cache()
-                elif hasattr(torch.mps, 'empty_cache'):
-                    torch.mps.empty_cache()
-                
-                batch = chunk[j:j+batch_size]
-                
-                # Ensure all batch items are valid strings
-                batch = [str(text).strip() for text in batch]
-                
-                # Handle empty strings by replacing with a placeholder
-                batch = [text if text else "unknown" for text in batch]
-                
-                try:
-                    # Tokenize and get embeddings
-                    inputs = tokenizer(batch, return_tensors="pt", padding=True, truncation=True, max_length=128)
-                    inputs = {k: v.to(device) for k, v in inputs.items()}
-                    
-                    # Get embeddings from the last hidden state (mean pooling)
-                    outputs = model(**inputs)
-                    batch_embeddings = outputs.last_hidden_state.mean(dim=1).cpu().numpy()
-                    chunk_embeddings.append(batch_embeddings)
-                    
-                except Exception as e:
-                    logger.error(f"Error processing batch: {e}")
-                    logger.error(f"Problematic batch: {batch}")
-                    # Skip this batch and continue with the next one
-                
-                # Delete tensors to free memory
-                del inputs, outputs
-            
-            # Combine embeddings from this chunk if we have any
-            if chunk_embeddings:
-                try:
-                    chunk_embeddings = np.vstack(chunk_embeddings)
-                    embeddings.append(chunk_embeddings)
-                except Exception as e:
-                    logger.error(f"Error combining chunk embeddings: {e}")
-            
-            # Update progress bar
-            progress_bar.update(1)
-            progress_bar.set_postfix(current=f"Chunk {chunk_num}/{total_chunks}")
-            
-            # Force garbage collection
-            import gc
-            gc.collect()
-    
-    # Close progress bar
-    progress_bar.close()
-    
-    # Combine all embeddings
-    if not embeddings:
+
+    embedding_matrix = _build_embedding_matrix(tokenizer, model, texts, chunk_size, batch_size, device)
+    if embedding_matrix is None:
         logger.warning("No valid embeddings generated. Returning default clusters.")
         return np.zeros(len(texts))
-        
+
     try:
-        logger.info(f"{Fore.BLUE}Combining embeddings from {len(embeddings)} chunks...{Style.RESET_ALL}")
-        embeddings = np.vstack(embeddings)
-        
-        # Verify we have valid embeddings
-        if embeddings.size == 0 or np.isnan(embeddings).any():
-            logger.warning("Invalid embeddings detected. Returning default clusters.")
-            return np.zeros(len(texts))
-        
-        logger.info(f"{Fore.GREEN}Successfully created embedding matrix of shape {embeddings.shape}{Style.RESET_ALL}")
-        
-        # Determine clustering approach based on dataset size
-        if len(embeddings) > 50000:
-            # For larger datasets, use a more efficient approach
-            logger.info(f"{Fore.BLUE}Large embedding matrix detected. Using memory-efficient clustering.{Style.RESET_ALL}")
-            
-            # Sample data for clustering if very large (more than 50K but less than 100K)
-            if len(embeddings) > 50000:
-                sample_size = min(50000, len(embeddings) // 2)
-                logger.info(f"{Fore.BLUE}Sampling {sample_size:,} of {len(embeddings):,} embeddings for initial clustering...{Style.RESET_ALL}")
-                
-                # Use a random subset for clustering to reduce memory usage
-                import numpy as np
-                indices = np.random.choice(len(embeddings), sample_size, replace=False)
-                sampled_embeddings = embeddings[indices]
-                
-                # Create progress indicator for clustering
-                from tqdm import tqdm
-                cluster_progress = tqdm(
-                    total=100, 
-                    desc=f"{Fore.BLUE}DBSCAN clustering{Style.RESET_ALL}",
-                    bar_format='{l_bar}{bar}| {elapsed}<{remaining}',
-                    ncols=80
-                )
-                
-                # Define callback for DBSCAN progress
-                def dbscan_callback(progress):
-                    cluster_progress.n = int(progress * 100)
-                    cluster_progress.refresh()
-                
-                # Use more memory-efficient DBSCAN parameters on the sample
-                from sklearn.cluster import DBSCAN
-                logger.info(f"{Fore.BLUE}Clustering sampled embeddings with DBSCAN...{Style.RESET_ALL}")
-                
-                # DBSCAN doesn't actually have a callback parameter, but we'll update
-                # progress at fixed intervals below as a workaround
-                sample_clustering = DBSCAN(
-                    eps=0.7,  # Slightly higher eps for more lenient clustering
-                    min_samples=2,  # Lower min_samples for faster processing
-                    metric="cosine",
-                    n_jobs=-1,
-                    algorithm='ball_tree'  # Ball tree can be more memory efficient
-                )
-                
-                # This is a dummy progress update since DBSCAN doesn't provide progress feedback
-                for i in range(10):
-                    dbscan_callback((i+1)/10)  # Simulate progress from 10% to 100%
-                    if i == 0:  # Actually fit on first iteration
-                        sample_clustering = sample_clustering.fit(sampled_embeddings)
-                        
-                # Close progress bar
-                cluster_progress.close()
-                
-                # Nearest neighbors approach to assign remaining points
-                from sklearn.neighbors import NearestNeighbors
-                logger.info("Assigning remaining points to clusters")
-                
-                # Find core samples from initial clustering
-                core_sample_indices = indices[sample_clustering.core_sample_indices_]
-                core_samples = embeddings[core_sample_indices]
-                core_labels = sample_clustering.labels_[sample_clustering.core_sample_indices_]
-                
-                # Create nearest neighbors model for the core samples
-                nn = NearestNeighbors(n_neighbors=1, algorithm='ball_tree').fit(core_samples)
-                
-                # Initialize labels for all points with -1 (noise)
-                all_labels = np.full(len(embeddings), -1)
-                
-                # Set labels for core samples
-                all_labels[core_sample_indices] = core_labels
-                
-                # Get remaining indices to classify
-                remaining_indices = np.setdiff1d(np.arange(len(embeddings)), core_sample_indices)
-                
-                # Process in batches to avoid memory issues
-                batch_size = 1000
-                for i in range(0, len(remaining_indices), batch_size):
-                    batch_indices = remaining_indices[i:i+batch_size]
-                    batch_embeddings = embeddings[batch_indices]
-                    
-                    # Find nearest core sample for each point in batch
-                    distances, indices = nn.kneighbors(batch_embeddings)
-                    
-                    # Assign label of nearest core sample, but only if within eps
-                    for j, (dist, idx) in enumerate(zip(distances, indices)):
-                        if dist[0] <= 0.7:  # Same eps as in DBSCAN
-                            all_labels[batch_indices[j]] = core_labels[idx[0]]
-                
-                clustering = type('', (), {})()  # Create empty object
-                clustering.labels_ = all_labels
-            else:
-                # Still use DBSCAN but with more memory-efficient parameters
-                logger.info("Clustering embeddings with memory-efficient DBSCAN")
-                clustering = DBSCAN(
-                    eps=0.7, 
-                    min_samples=2, 
-                    metric="cosine", 
-                    n_jobs=-1,
-                    algorithm='ball_tree'  # Ball tree can be more memory efficient
-                ).fit(embeddings)
-        else:
-            # For smaller datasets, use standard DBSCAN
-            logger.info("Clustering embeddings with standard DBSCAN")
-            clustering = DBSCAN(
-                eps=0.6, 
-                min_samples=3, 
-                metric="cosine", 
-                n_jobs=-1
-            ).fit(embeddings)
-        
-        # Ensure we have the right number of labels
-        if len(clustering.labels_) != len(texts):
-            logger.warning(f"Number of cluster labels ({len(clustering.labels_)}) doesn't match number of texts ({len(texts)}). Padding with zeros.")
-            # Pad with zeros if necessary
-            labels = np.zeros(len(texts))
-            labels[:len(clustering.labels_)] = clustering.labels_
-            return labels
-            
-        return clustering.labels_
-        
-    except Exception as e:
-        logger.error(f"Error during clustering: {e}")
+        labels = _cluster_embedding_matrix(embedding_matrix)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.error("Error during clustering: %s", exc)
         logger.warning("Returning default clusters due to error.")
         return np.zeros(len(texts))
+
+    if len(labels) != len(texts):
+        logger.warning(
+            "Number of cluster labels (%d) doesn't match number of texts (%d). Padding with zeros.",
+            len(labels),
+            len(texts),
+        )
+        padded_labels = np.zeros(len(texts))
+        padded_labels[: len(labels)] = labels
+        return padded_labels
+
+    return labels
 
 def save_outliers(df, output_dir):
     """

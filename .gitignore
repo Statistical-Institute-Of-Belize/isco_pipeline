@@ -91,3 +91,6 @@ data/
 *.cert
 credentials.json
 secrets.yaml
+
+# MkDocs build directory
+site/
