@@ -6,7 +6,7 @@ data:
   review_dir: "data/review/"
   # Settings for ISCO code validation
   validate_against_reference: true   # Set to true to validate ISCO codes against the reference file
-  reference_file: "/Users/gianaguilar/Documents/GitHub/isco_pipeline/data/reference/isco08_reference.csv"  # Absolute path to reference file
+  reference_file: "data/reference/isco08_reference.csv"  # Absolute path to reference file
   # Settings for large datasets
   skip_clustering: true    # Set to true to skip clustering entirely
   skip_clustering_threshold: 100000  # Skip clustering for datasets larger than this

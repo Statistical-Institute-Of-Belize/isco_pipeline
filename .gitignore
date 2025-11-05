@@ -56,3 +56,38 @@ tmp_trainer/
 
 # Data files
 data/
+*.csv
+*.xlsx
+*.xls
+*.json
+!requirements.txt
+!config.yaml
+
+# Model files
+*.pkl
+*.pickle
+*.h5
+*.pt
+*.pth
+*.onnx
+*.safetensors
+*.bin
+
+# Temporary files
+*.tmp
+*.temp
+*.swp
+*.swo
+*~
+
+# Database files
+*.db
+*.sqlite
+*.sqlite3
+
+# Credentials
+*.pem
+*.key
+*.cert
+credentials.json
+secrets.yaml

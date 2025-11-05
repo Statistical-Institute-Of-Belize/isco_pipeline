@@ -42,9 +42,7 @@ Then access the API at `http://localhost:8000/docs`
 
 ## Docker Deployment
 
-```
-docker-compose up -d
-```
+pending
 
 ## License
 
