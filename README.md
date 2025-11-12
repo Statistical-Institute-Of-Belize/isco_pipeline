@@ -2,6 +2,8 @@
 
 A cohesive training and inference pipeline for predicting ISCO-08 occupation codes from job titles and duty descriptions. The project bundles a command-line workflow for data preparation, model training, evaluation, and batch prediction, plus a FastAPI service for online scoring.
 
+[Full Docs](https://statistical-institute-of-belize.github.io/isco_pipeline/)
+
 ## Quick Start
 - **Create env & install**
   ```bash
